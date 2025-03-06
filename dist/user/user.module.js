@@ -12,14 +12,25 @@ const user_controller_1 = require("./user.controller");
 const user_service_1 = require("./user.service");
 const typeorm_1 = require("@nestjs/typeorm");
 const user_entity_1 = require("./user.entity");
+const auth_module_1 = require("../auth/auth.module");
+const jwt_auth_middleware_1 = require("../common/jwt-auth.middleware");
 let UserModule = class UserModule {
+    configure(consumer) {
+        consumer
+            .apply(jwt_auth_middleware_1.JwtAuthMiddleware)
+            .forRoutes({ path: 'users', method: common_1.RequestMethod.GET }, { path: 'users/:id', method: common_1.RequestMethod.PATCH });
+    }
 };
 exports.UserModule = UserModule;
 exports.UserModule = UserModule = __decorate([
     (0, common_1.Module)({
-        imports: [typeorm_1.TypeOrmModule.forFeature([user_entity_1.User])],
+        imports: [
+            typeorm_1.TypeOrmModule.forFeature([user_entity_1.User]),
+            (0, common_1.forwardRef)(() => auth_module_1.AuthModule),
+        ],
         controllers: [user_controller_1.UserController],
         providers: [user_service_1.UserService],
+        exports: [user_service_1.UserService],
     })
 ], UserModule);
 //# sourceMappingURL=user.module.js.map

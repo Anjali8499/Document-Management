@@ -6,4 +6,6 @@ export declare class User {
     enum: ['ADMIN', 'EDOTOR', 'VIEWER'];
     email: string;
     password: string;
+    createdAt: Date;
+    updatedAt: Date;
 }

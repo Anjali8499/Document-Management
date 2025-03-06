@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { UserModule } from './user/user.module';
-// import { AuthModule } from './auth/auth.module';
+import { AuthModule } from './auth/auth.module';
 // import { DocumentsModule } from './documents/documents.module';
 // import { IngestionModule } from './ingestion/ingestion.module';
 
@@ -19,7 +19,7 @@ import { UserModule } from './user/user.module';
       autoLoadEntities: true,
       synchronize: true,
     }),
-    // AuthModule,
+    AuthModule,
     UserModule,
     // DocumentsModule,
     // IngestionModule,

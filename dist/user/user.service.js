@@ -32,21 +32,63 @@ let UserService = class UserService {
         return this.userRepository.save(user);
     }
     async findAll() {
-        return this.userRepository.find();
-    }
-    async findOne(id) {
-        return this.userRepository.findOne({ where: { id } }).then(user => {
-            if (!user) {
-                throw new Error('User not found');
-            }
-            return user;
+        return this.userRepository.find({
+            select: ['id', 'username', 'email', 'mobile', 'role']
         });
     }
+    async findOne(id) {
+        const user = await this.userRepository.findOne({
+            where: { id },
+            select: ['id', 'username', 'email', 'mobile', 'role']
+        });
+        if (!user) {
+            throw new Error('User not found');
+        }
+        return user;
+    }
+    async findByEmail(email) {
+        return this.userRepository.findOne({ where: { email } });
+    }
+    async findByMobile(mobile) {
+        return this.userRepository.findOne({ where: { mobile } });
+    }
+    async findByEmailOrMobile(email, mobile) {
+        return this.userRepository.findOne({
+            where: [
+                { email },
+                { mobile }
+            ]
+        });
+    }
+    async checkUserExists(email, mobile) {
+        const existingUserByEmail = await this.findByEmail(email);
+        if (existingUserByEmail) {
+            throw new common_1.ConflictException(`User with email ${email} already exists`);
+        }
+        const existingUserByMobile = await this.findByMobile(mobile);
+        if (existingUserByMobile) {
+            throw new common_1.ConflictException(`User with mobile number ${mobile} already exists`);
+        }
+    }
+    async checkUserExistsForUpdate(id, updateUserDto) {
+        if (updateUserDto.mobile) {
+            const existingUserByMobile = await this.findByMobile(updateUserDto.mobile);
+            if (existingUserByMobile && existingUserByMobile.id !== id) {
+                throw new common_1.ConflictException(`User with mobile number ${updateUserDto.mobile} already exists`);
+            }
+        }
+    }
     async update(id, updateUserDto) {
-        return this.userRepository.update(id, updateUserDto).then(() => { });
+        try {
+            await this.userRepository.update(id, updateUserDto);
+            return this.userRepository.findOne({ where: { id } });
+        }
+        catch (error) {
+            throw new Error(`Error updating user: ${error}`);
+        }
     }
     async remove(id) {
-        return this.userRepository.delete(id).then(() => { });
+        await this.userRepository.delete(id);
     }
 };
 exports.UserService = UserService;

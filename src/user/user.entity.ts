@@ -20,4 +20,10 @@ export class User {
 
   @Column()
   password: string;
+
+  @Column({ default: () => 'CURRENT_TIMESTAMP' })
+  createdAt: Date;
+
+  @Column({ default: () => 'CURRENT_TIMESTAMP' })
+  updatedAt: Date;
 }

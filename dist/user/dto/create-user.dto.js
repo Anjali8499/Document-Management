@@ -11,36 +11,51 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CreateUserDto = void 0;
 const class_validator_1 = require("class-validator");
+const swagger_1 = require("@nestjs/swagger");
+var UserRole;
+(function (UserRole) {
+    UserRole["ADMIN"] = "ADMIN";
+    UserRole["EDITOR"] = "EDITOR";
+    UserRole["VIEWER"] = "VIEWER";
+})(UserRole || (UserRole = {}));
 class CreateUserDto {
     username;
     email;
     password;
     mobile;
-    enum;
     role;
 }
 exports.CreateUserDto = CreateUserDto;
 __decorate([
+    (0, swagger_1.ApiProperty)({ description: 'Username of the user' }),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MinLength)(3, { message: 'Username must be at least 3 characters long' }),
     (0, class_validator_1.MaxLength)(20),
     __metadata("design:type", String)
 ], CreateUserDto.prototype, "username", void 0);
 __decorate([
+    (0, swagger_1.ApiProperty)({ description: 'Email of the user' }),
     (0, class_validator_1.IsEmail)(),
     __metadata("design:type", String)
 ], CreateUserDto.prototype, "email", void 0);
 __decorate([
+    (0, swagger_1.ApiProperty)({ description: 'Password of the user' }),
     (0, class_validator_1.MinLength)(6),
     __metadata("design:type", String)
 ], CreateUserDto.prototype, "password", void 0);
 __decorate([
+    (0, swagger_1.ApiProperty)({ description: 'Mobile number of the user' }),
     (0, class_validator_1.MinLength)(10),
     (0, class_validator_1.MaxLength)(10),
     __metadata("design:type", String)
 ], CreateUserDto.prototype, "mobile", void 0);
 __decorate([
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", Array)
-], CreateUserDto.prototype, "enum", void 0);
+    (0, swagger_1.ApiProperty)({
+        description: 'Role of the user',
+        enum: UserRole,
+        example: 'ADMIN'
+    }),
+    (0, class_validator_1.IsEnum)(UserRole),
+    __metadata("design:type", String)
+], CreateUserDto.prototype, "role", void 0);
 //# sourceMappingURL=create-user.dto.js.map
