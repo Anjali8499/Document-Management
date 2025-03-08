@@ -23,7 +23,6 @@ const swagger_1 = require("@nestjs/swagger");
 const password_utils_1 = require("../utils/password.utils");
 const auth_service_1 = require("../auth/auth.service");
 const current_user_decorator_1 = require("../auth/decorators/current-user.decorator");
-const token_decorator_1 = require("../auth/decorators/token.decorator");
 const session_service_1 = require("../auth/session.service");
 let UserController = class UserController {
     userService;
@@ -89,13 +88,13 @@ let UserController = class UserController {
             throw new common_1.InternalServerErrorException('Error during login');
         }
     }
-    async logout(user, token) {
+    async logout(user) {
         try {
             const activeSessions = await this.sessionService.findActiveSessionsByUserId(user.id);
             if (activeSessions.length === 0) {
                 return { message: 'No active sessions to logout from' };
             }
-            await this.sessionService.invalidateSession(token);
+            await this.sessionService.invalidateSession(user.token);
             console.log(`User ${user.email} (ID: ${user.id}) logged out successfully`);
             return { message: 'Logged out successfully' };
         }
@@ -105,6 +104,27 @@ let UserController = class UserController {
             }
             console.error('Logout error:', error);
             throw new common_1.InternalServerErrorException('Error during logout');
+        }
+    }
+    async logoutSession(sessionId, user) {
+        try {
+            const id = parseInt(sessionId, 10);
+            if (isNaN(id)) {
+                throw new common_1.NotFoundException('Invalid session ID');
+            }
+            const success = await this.sessionService.invalidateSessionById(id, user.id);
+            if (!success) {
+                throw new common_1.NotFoundException('Session not found or does not belong to you');
+            }
+            console.log(`User ${user.email} (ID: ${user.id}) invalidated session ${id}`);
+            return { message: 'Session invalidated successfully' };
+        }
+        catch (error) {
+            if (error instanceof common_1.NotFoundException || error instanceof common_1.UnauthorizedException) {
+                throw error;
+            }
+            console.error('Session invalidation error:', error);
+            throw new common_1.InternalServerErrorException('Error during session invalidation');
         }
     }
     async findAll(user) {
@@ -176,6 +196,22 @@ let UserController = class UserController {
             throw new common_1.InternalServerErrorException('Error updating user');
         }
     }
+    async getActiveSessions(user) {
+        try {
+            const sessions = await this.sessionService.findActiveSessionsByUserId(user.id);
+            const sanitizedSessions = sessions.map(session => ({
+                id: session.id,
+                createdAt: session.createdAt,
+                expiresAt: session.expiresAt,
+                tokenPreview: session.token.substring(0, 10) + '...'
+            }));
+            return { sessions: sanitizedSessions };
+        }
+        catch (error) {
+            console.error('Error fetching active sessions:', error);
+            throw new common_1.InternalServerErrorException('Error fetching active sessions');
+        }
+    }
 };
 exports.UserController = UserController;
 __decorate([
@@ -197,16 +233,27 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "login", null);
 __decorate([
-    (0, common_1.Delete)('logout'),
+    (0, common_1.Post)('logout'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, swagger_1.ApiResponse)({ status: 200, description: 'User logged out successfully' }),
     (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, token_decorator_1.Token)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "logout", null);
+__decorate([
+    (0, common_1.Post)('logout/session/:id'),
+    (0, swagger_1.ApiBearerAuth)(),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Session invalidated successfully' }),
+    (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
+    (0, swagger_1.ApiNotFoundResponse)({ description: 'Session not found' }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], UserController.prototype, "logoutSession", null);
 __decorate([
     (0, common_1.Get)('users'),
     (0, swagger_1.ApiBearerAuth)(),
@@ -245,6 +292,16 @@ __decorate([
     __metadata("design:paramtypes", [String, update_user_dto_1.UpdateUserDto, Object]),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "updateUser", null);
+__decorate([
+    (0, common_1.Get)('sessions'),
+    (0, swagger_1.ApiBearerAuth)(),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Return all active sessions for the current user' }),
+    (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], UserController.prototype, "getActiveSessions", null);
 exports.UserController = UserController = __decorate([
     (0, swagger_1.ApiTags)('users'),
     (0, common_1.Controller)(),

@@ -1,7 +1,7 @@
 import { Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
-import { SessionService } from './session.service';
-import { extractTokenFromHeader } from './utils/extract-token.util';
+import { SessionService } from '../auth/session.service';
+import { extractTokenFromHeader } from '../utils/extract-token.util';
 
 @Injectable()
 export class JwtAuthMiddleware implements NestMiddleware {

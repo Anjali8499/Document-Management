@@ -1,14 +1,11 @@
-import { Controller, Get, Post, Param, Body, Patch, InternalServerErrorException, ConflictException, NotFoundException, UnauthorizedException, ForbiddenException, Delete, Inject, forwardRef } from '@nestjs/common';
-import { UserService } from './user.service';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { UserResponseDto } from './dto/user-response.dto';
-import { LoginDto } from './dto/login.dto';
+import { Controller, Get, Post, Param, Body, Patch, InternalServerErrorException, ConflictException, NotFoundException, UnauthorizedException, ForbiddenException, Inject, forwardRef, Delete } from '@nestjs/common';
+import { CreateUserDto, UpdateUserDto, UserResponseDto, LoginDto } from './dto/user.dto';
 import { ApiTags, ApiResponse, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse, ApiBearerAuth, ApiForbiddenResponse } from '@nestjs/swagger';
 import { hashPassword, comparePasswords } from '../utils/password.utils';
+import { UserService } from './user.service';
 import { AuthService } from '../auth/auth.service';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { CurrentUser } from '../decorators/current-user.decorator'; 
+import { JwtPayload } from '../interfaces/jwt-payload.interface';
 import { SessionService } from '../auth/session.service';
 
 @ApiTags('users')
@@ -105,16 +102,17 @@ export class UserController {
   @ApiBearerAuth()    
   @ApiResponse({ status: 200, description: 'User logged out successfully' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  async logout(req: Request, @CurrentUser() user: JwtPayload): Promise<{ message: string }> {
+  async logout(@CurrentUser() user: JwtPayload): Promise<{ message: string }> {
     try {
-      const token = req['token'];
       // Get all active sessions for this user
       const activeSessions = await this.sessionService.findActiveSessionsByUserId(user.id);
+      
       if (activeSessions.length === 0) {
         return { message: 'No active sessions to logout from' };
       }
+      
       // Revoke the current token by invalidating the session
-      await this.sessionService.invalidateSession(token);
+      await this.sessionService.invalidateSession(user.token);
       
       // Log the successful logout
       console.log(`User ${user.email} (ID: ${user.id}) logged out successfully`);
@@ -126,6 +124,41 @@ export class UserController {
       }
       console.error('Logout error:', error);
       throw new InternalServerErrorException('Error during logout');
+    }
+  }
+
+  @Post('logout/session/:id')
+  @ApiBearerAuth()    
+  @ApiResponse({ status: 200, description: 'Session invalidated successfully' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  @ApiNotFoundResponse({ description: 'Session not found' })
+  async logoutSession(
+    @Param('id') sessionId: string,
+    @CurrentUser() user: JwtPayload
+  ): Promise<{ message: string }> {
+    try {
+      const id = parseInt(sessionId, 10);
+      if (isNaN(id)) {
+        throw new NotFoundException('Invalid session ID');
+      }
+      
+      // Invalidate the specific session
+      const success = await this.sessionService.invalidateSessionById(id, user.id);
+      
+      if (!success) {
+        throw new NotFoundException('Session not found or does not belong to you');
+      }
+      
+      // Log the successful session invalidation
+      console.log(`User ${user.email} (ID: ${user.id}) invalidated session ${id}`);
+      
+      return { message: 'Session invalidated successfully' };
+    } catch (error: unknown) {
+      if (error instanceof NotFoundException || error instanceof UnauthorizedException) {
+        throw error;
+      }
+      console.error('Session invalidation error:', error);
+      throw new InternalServerErrorException('Error during session invalidation');
     }
   }
   
@@ -225,6 +258,31 @@ export class UserController {
       }
       console.error(`Error updating user ${id}:`, error);
       throw new InternalServerErrorException('Error updating user');
+    }
+  }
+
+  @Get('sessions')
+  @ApiBearerAuth()
+  @ApiResponse({ status: 200, description: 'Return all active sessions for the current user' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  async getActiveSessions(@CurrentUser() user: JwtPayload): Promise<{ sessions: any[] }> {
+    try {
+      // Get all active sessions for this user
+      const sessions = await this.sessionService.findActiveSessionsByUserId(user.id);
+      
+      // Return only necessary session information (exclude sensitive data)
+      const sanitizedSessions = sessions.map(session => ({
+        id: session.id,
+        createdAt: session.createdAt,
+        expiresAt: session.expiresAt,
+        // Include a truncated version of the token for identification
+        tokenPreview: session.token.substring(0, 10) + '...'
+      }));
+      
+      return { sessions: sanitizedSessions };
+    } catch (error: unknown) {
+      console.error('Error fetching active sessions:', error);
+      throw new InternalServerErrorException('Error fetching active sessions');
     }
   }
 }

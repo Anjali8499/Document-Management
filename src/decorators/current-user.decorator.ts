@@ -7,12 +7,10 @@ import { JwtPayload } from '../interfaces/jwt-payload.interface';
  */
 export const CurrentUser = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): JwtPayload => {
-    const request = ctx.switchToHttp().getRequest<{ user: JwtPayload }>();
-    
-    if (!request.user) {
+    const user = ctx.switchToHttp().getRequest< JwtPayload >();
+    if (!user) {
       throw new UnauthorizedException('User is not authenticated');
     }
-    
-    return request.user;
+    return user;
   },
-); 
+);

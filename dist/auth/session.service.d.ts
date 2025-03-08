@@ -15,4 +15,5 @@ export declare class SessionService {
     invalidateAllSessionsForUser(userId: number): Promise<number>;
     verifySession(token: string): Promise<JwtPayload>;
     private cleanupExpiredSessions;
+    invalidateSessionById(sessionId: number, userId: number): Promise<boolean>;
 }

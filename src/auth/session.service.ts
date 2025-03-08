@@ -4,7 +4,7 @@ import { Repository, LessThan, MoreThanOrEqual } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { UserSession } from './auth.entity';
 import { User } from '../user/user.entity';
-import { JwtPayload } from './interfaces/jwt-payload.interface';
+import { JwtPayload } from '../interfaces/jwt-payload.interface';
 import { AuthService } from './auth.service';
 
 @Injectable()
@@ -138,5 +138,30 @@ export class SessionService {
     });
     
     console.log('Cleaned up expired sessions');
+  }
+
+  /**
+   * Invalidate a session by its ID
+   * @param sessionId The session ID to invalidate
+   * @param userId The user ID (for security verification)
+   * @returns True if the session was found and invalidated, false otherwise
+   */
+  async invalidateSessionById(sessionId: number, userId: number): Promise<boolean> {
+    // First find the session to verify it belongs to the user
+    const session = await this.sessionRepository.findOne({ 
+      where: { 
+        id: sessionId,
+        userId
+      }
+    });
+    
+    if (!session) {
+      return false;
+    }
+    
+    // Invalidate the session
+    session.isActive = false;
+    await this.sessionRepository.save(session);
+    return true;
   }
 } 

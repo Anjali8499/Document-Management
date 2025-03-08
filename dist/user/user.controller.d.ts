@@ -13,10 +13,16 @@ export declare class UserController {
     constructor(userService: UserService, authService: AuthService, sessionService: SessionService);
     createUser(createUserDto: CreateUserDto): Promise<UserResponseDto>;
     login(loginDto: LoginDto): Promise<UserResponseDto>;
-    logout(user: JwtPayload, token: string): Promise<{
+    logout(user: JwtPayload): Promise<{
+        message: string;
+    }>;
+    logoutSession(sessionId: string, user: JwtPayload): Promise<{
         message: string;
     }>;
     findAll(user: JwtPayload): Promise<UserResponseDto[]>;
     findOne(id: string, user: JwtPayload): Promise<UserResponseDto>;
     updateUser(id: string, updateUserDto: UpdateUserDto, user: JwtPayload): Promise<UserResponseDto>;
+    getActiveSessions(user: JwtPayload): Promise<{
+        sessions: any[];
+    }>;
 }

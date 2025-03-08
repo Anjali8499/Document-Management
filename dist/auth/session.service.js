@@ -95,6 +95,20 @@ let SessionService = class SessionService {
         });
         console.log('Cleaned up expired sessions');
     }
+    async invalidateSessionById(sessionId, userId) {
+        const session = await this.sessionRepository.findOne({
+            where: {
+                id: sessionId,
+                userId
+            }
+        });
+        if (!session) {
+            return false;
+        }
+        session.isActive = false;
+        await this.sessionRepository.save(session);
+        return true;
+    }
 };
 exports.SessionService = SessionService;
 exports.SessionService = SessionService = __decorate([
