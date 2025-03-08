@@ -12,15 +12,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
-const token_blacklist_service_1 = require("../common/token-blacklist.service");
+const session_service_1 = require("./session.service");
 let AuthService = class AuthService {
     jwtService;
-    tokenBlacklistService;
-    constructor(jwtService, tokenBlacklistService) {
+    sessionService;
+    constructor(jwtService, sessionService) {
         this.jwtService = jwtService;
-        this.tokenBlacklistService = tokenBlacklistService;
+        this.sessionService = sessionService;
     }
-    generateToken(user) {
+    generateJwtToken(user) {
         const payload = {
             id: user.id,
             email: user.email,
@@ -28,17 +28,17 @@ let AuthService = class AuthService {
         };
         return this.jwtService.sign(payload);
     }
-    verifyToken(token) {
+    verifyJwtToken(token) {
         return this.jwtService.verify(token);
     }
     async revokeToken(token) {
-        await this.tokenBlacklistService.blacklistToken(token);
+        await this.sessionService.invalidateSession(token);
     }
 };
 exports.AuthService = AuthService;
 exports.AuthService = AuthService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [jwt_1.JwtService,
-        token_blacklist_service_1.TokenBlacklistService])
+        session_service_1.SessionService])
 ], AuthService);
 //# sourceMappingURL=auth.service.js.map

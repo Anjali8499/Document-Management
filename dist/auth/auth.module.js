@@ -10,9 +10,11 @@ exports.AuthModule = void 0;
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const config_1 = require("@nestjs/config");
+const typeorm_1 = require("@nestjs/typeorm");
 const auth_service_1 = require("./auth.service");
 const user_module_1 = require("../user/user.module");
-const token_blacklist_service_1 = require("../common/token-blacklist.service");
+const auth_entity_1 = require("./auth.entity");
+const session_service_1 = require("./session.service");
 let AuthModule = class AuthModule {
 };
 exports.AuthModule = AuthModule;
@@ -20,6 +22,7 @@ exports.AuthModule = AuthModule = __decorate([
     (0, common_1.Module)({
         imports: [
             (0, common_1.forwardRef)(() => user_module_1.UserModule),
+            typeorm_1.TypeOrmModule.forFeature([auth_entity_1.UserSession]),
             jwt_1.JwtModule.registerAsync({
                 imports: [config_1.ConfigModule],
                 inject: [config_1.ConfigService],
@@ -31,12 +34,12 @@ exports.AuthModule = AuthModule = __decorate([
         ],
         providers: [
             auth_service_1.AuthService,
-            token_blacklist_service_1.TokenBlacklistService,
+            session_service_1.SessionService,
         ],
         exports: [
             auth_service_1.AuthService,
             jwt_1.JwtModule,
-            token_blacklist_service_1.TokenBlacklistService,
+            session_service_1.SessionService,
         ],
     })
 ], AuthModule);

@@ -4,7 +4,7 @@ import { UserService } from './user.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './user.entity';
 import { AuthModule } from '../auth/auth.module';
-import { JwtAuthMiddleware } from '../common/jwt-auth.middleware';
+import { JwtAuthMiddleware } from '../auth/jwt-auth.middleware';
 
 @Module({
   imports: [
@@ -21,7 +21,9 @@ export class UserModule implements NestModule {
       .apply(JwtAuthMiddleware)
       .forRoutes(
         { path: 'users', method: RequestMethod.GET },
-        { path: 'users/:id', method: RequestMethod.PATCH }
+        { path: 'users/:id', method: RequestMethod.GET },
+        { path: 'users/:id', method: RequestMethod.PATCH },
+        { path: 'logout', method: RequestMethod.DELETE },
       );
   }
 }

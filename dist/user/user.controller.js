@@ -22,72 +22,82 @@ const login_dto_1 = require("./dto/login.dto");
 const swagger_1 = require("@nestjs/swagger");
 const password_utils_1 = require("../utils/password.utils");
 const auth_service_1 = require("../auth/auth.service");
-const current_user_decorator_1 = require("../common/current-user.decorator");
-const token_decorator_1 = require("../common/token.decorator");
+const current_user_decorator_1 = require("../auth/decorators/current-user.decorator");
+const token_decorator_1 = require("../auth/decorators/token.decorator");
+const session_service_1 = require("../auth/session.service");
 let UserController = class UserController {
     userService;
     authService;
-    constructor(userService, authService) {
+    sessionService;
+    constructor(userService, authService, sessionService) {
         this.userService = userService;
         this.authService = authService;
+        this.sessionService = sessionService;
     }
     async createUser(createUserDto) {
         try {
-            const { username, email, mobile, role } = createUserDto;
-            const existingUser = await this.userService.findByEmailOrMobile(email, mobile);
+            const { username, email, mobile, password, role } = createUserDto;
+            const existingUser = await this.userService.findByEmail(email);
             if (existingUser) {
-                throw new common_1.ConflictException('User with this email or mobile already exists');
+                throw new common_1.ConflictException('Email already exists');
             }
-            const hashedPassword = await (0, password_utils_1.hashPassword)(createUserDto.password);
+            const hashedPassword = await (0, password_utils_1.hashPassword)(password);
             const user = await this.userService.createUser(username, email, hashedPassword, mobile, role);
-            return {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                mobile: user.mobile,
-                role: user.role
-            };
-        }
-        catch (error) {
-            if (error instanceof common_1.ConflictException) {
-                throw error;
-            }
-            throw new common_1.InternalServerErrorException('Error creating user');
-        }
-    }
-    async login(loginDto) {
-        const { email, password } = loginDto;
-        try {
-            const user = await this.userService.findByEmail(email);
-            if (!user) {
-                throw new common_1.NotFoundException('User not found');
-            }
-            const isPasswordValid = await (0, password_utils_1.comparePasswords)(password, user.password);
-            if (!isPasswordValid) {
-                throw new common_1.UnauthorizedException('Invalid credentials');
-            }
-            const token = this.authService.generateToken(user);
+            const token = await this.sessionService.createSession(user);
             return {
                 id: user.id,
                 username: user.username,
                 email: user.email,
                 mobile: user.mobile,
                 role: user.role,
-                accessToken: token
+                accessToken: token,
             };
         }
         catch (error) {
-            if (error instanceof common_1.NotFoundException || error instanceof common_1.UnauthorizedException) {
+            if (error instanceof common_1.ConflictException) {
+                throw error;
+            }
+            console.error('Registration error:', error);
+            throw new common_1.InternalServerErrorException('Error during registration');
+        }
+    }
+    async login(loginDto) {
+        try {
+            const user = await this.userService.findByEmail(loginDto.email);
+            if (!user) {
+                throw new common_1.UnauthorizedException('Invalid credentials');
+            }
+            const isPasswordValid = await (0, password_utils_1.comparePasswords)(loginDto.password, user.password);
+            if (!isPasswordValid) {
+                throw new common_1.UnauthorizedException('Invalid credentials');
+            }
+            const token = await this.sessionService.createSession(user);
+            return {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                mobile: user.mobile,
+                role: user.role,
+                accessToken: token,
+            };
+        }
+        catch (error) {
+            if (error instanceof common_1.UnauthorizedException) {
                 throw error;
             }
             console.error('Login error:', error);
             throw new common_1.InternalServerErrorException('Error during login');
         }
     }
-    async logout(token) {
+    async logout(user, token) {
         try {
-            await this.authService.revokeToken(token);
-            return;
+            const activeSessions = await this.sessionService.findActiveSessionsByUserId(user.id);
+            if (activeSessions.length === 0) {
+                return { message: 'No active sessions to logout from' };
+            }
+            await this.sessionService.invalidateSession(token);
+            console.log(`User ${user.email} (ID: ${user.id}) logged out successfully`);
+            return { message: 'Logged out successfully' };
         }
         catch (error) {
             if (error instanceof common_1.UnauthorizedException) {
@@ -103,7 +113,13 @@ let UserController = class UserController {
                 throw new common_1.ForbiddenException('Only administrators can access all users');
             }
             const users = await this.userService.findAll();
-            return users;
+            return users.map(user => ({
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                mobile: user.mobile,
+                role: user.role
+            }));
         }
         catch (error) {
             if (error instanceof common_1.ForbiddenException) {
@@ -113,20 +129,34 @@ let UserController = class UserController {
             throw new common_1.InternalServerErrorException('Error fetching users');
         }
     }
+    async findOne(id, user) {
+        try {
+            if (user.id !== parseInt(id) && user.role !== 'ADMIN') {
+                throw new common_1.ForbiddenException('You can only access your own profile');
+            }
+            const foundUser = await this.userService.findOne(parseInt(id));
+            return {
+                id: foundUser.id,
+                username: foundUser.username,
+                email: foundUser.email,
+                mobile: foundUser.mobile,
+                role: foundUser.role
+            };
+        }
+        catch (error) {
+            if (error instanceof common_1.NotFoundException || error instanceof common_1.ForbiddenException) {
+                throw error;
+            }
+            console.error(`Error fetching user ${id}:`, error);
+            throw new common_1.InternalServerErrorException('Error fetching user');
+        }
+    }
     async updateUser(id, updateUserDto, user) {
         try {
-            const userId = Number(id);
-            if (user.id !== userId && user.role !== 'ADMIN') {
+            if (user.id !== parseInt(id) && user.role !== 'ADMIN') {
                 throw new common_1.ForbiddenException('You can only update your own profile');
             }
-            if (updateUserDto.email || updateUserDto.mobile) {
-                await this.userService.checkUserExistsForUpdate(userId, updateUserDto);
-            }
-            if (updateUserDto.password) {
-                const hashedPassword = await (0, password_utils_1.hashPassword)(updateUserDto.password);
-                updateUserDto.password = hashedPassword;
-            }
-            const updatedUser = await this.userService.update(userId, updateUserDto);
+            const updatedUser = await this.userService.update(parseInt(id), updateUserDto);
             if (!updatedUser) {
                 throw new common_1.NotFoundException(`User with ID ${id} not found`);
             }
@@ -139,39 +169,19 @@ let UserController = class UserController {
             };
         }
         catch (error) {
-            if (error instanceof common_1.NotFoundException ||
-                error instanceof common_1.ConflictException ||
-                error instanceof common_1.ForbiddenException) {
+            if (error instanceof common_1.NotFoundException || error instanceof common_1.ForbiddenException) {
                 throw error;
             }
-            console.error('Error updating user:', error);
+            console.error(`Error updating user ${id}:`, error);
             throw new common_1.InternalServerErrorException('Error updating user');
-        }
-    }
-    async getTokenInfo(token) {
-        try {
-            const decodedToken = await this.authService.verifyToken(token);
-            const tokenInfo = {
-                id: decodedToken.id,
-                email: decodedToken.email,
-                role: decodedToken.role
-            };
-            return { tokenInfo };
-        }
-        catch (error) {
-            if (error instanceof common_1.UnauthorizedException) {
-                throw error;
-            }
-            console.error('Token info error:', error);
-            throw new common_1.InternalServerErrorException('Error retrieving token information');
         }
     }
 };
 exports.UserController = UserController;
 __decorate([
-    (0, common_1.Post)('signup'),
+    (0, common_1.Post)('register'),
     (0, swagger_1.ApiResponse)({ status: 201, description: 'User registered successfully', type: user_response_dto_1.UserResponseDto }),
-    (0, swagger_1.ApiConflictResponse)({ description: 'User with the same email or mobile already exists' }),
+    (0, swagger_1.ApiConflictResponse)({ description: 'Email already exists' }),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [create_user_dto_1.CreateUserDto]),
@@ -180,7 +190,6 @@ __decorate([
 __decorate([
     (0, common_1.Post)('login'),
     (0, swagger_1.ApiResponse)({ status: 200, description: 'User logged in successfully', type: user_response_dto_1.UserResponseDto }),
-    (0, swagger_1.ApiNotFoundResponse)({ description: 'User not found' }),
     (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Invalid credentials' }),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -193,9 +202,9 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 200, description: 'User logged out successfully' }),
     (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(0, (0, token_decorator_1.Token)()),
+    __param(1, (0, token_decorator_1.Token)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "logout", null);
 __decorate([
@@ -210,13 +219,25 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "findAll", null);
 __decorate([
+    (0, common_1.Get)('users/:id'),
+    (0, swagger_1.ApiBearerAuth)(),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Return user by ID', type: user_response_dto_1.UserResponseDto }),
+    (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
+    (0, swagger_1.ApiNotFoundResponse)({ description: 'User not found' }),
+    (0, swagger_1.ApiForbiddenResponse)({ description: 'Forbidden - Can only access own profile unless admin' }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], UserController.prototype, "findOne", null);
+__decorate([
     (0, common_1.Patch)('users/:id'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, swagger_1.ApiResponse)({ status: 200, description: 'User updated successfully', type: user_response_dto_1.UserResponseDto }),
-    (0, swagger_1.ApiNotFoundResponse)({ description: 'User not found' }),
     (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
+    (0, swagger_1.ApiNotFoundResponse)({ description: 'User not found' }),
     (0, swagger_1.ApiForbiddenResponse)({ description: 'Forbidden - Can only update own profile unless admin' }),
-    (0, swagger_1.ApiConflictResponse)({ description: 'User with the same email or mobile already exists' }),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __param(2, (0, current_user_decorator_1.CurrentUser)()),
@@ -224,20 +245,12 @@ __decorate([
     __metadata("design:paramtypes", [String, update_user_dto_1.UpdateUserDto, Object]),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "updateUser", null);
-__decorate([
-    (0, common_1.Get)('token-info'),
-    (0, swagger_1.ApiBearerAuth)(),
-    (0, swagger_1.ApiResponse)({ status: 200, description: 'Token information retrieved successfully' }),
-    (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
-    __param(0, (0, token_decorator_1.Token)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
-    __metadata("design:returntype", Promise)
-], UserController.prototype, "getTokenInfo", null);
 exports.UserController = UserController = __decorate([
-    (0, swagger_1.ApiTags)('auth'),
+    (0, swagger_1.ApiTags)('users'),
     (0, common_1.Controller)(),
+    __param(2, (0, common_1.Inject)((0, common_1.forwardRef)(() => session_service_1.SessionService))),
     __metadata("design:paramtypes", [user_service_1.UserService,
-        auth_service_1.AuthService])
+        auth_service_1.AuthService,
+        session_service_1.SessionService])
 ], UserController);
 //# sourceMappingURL=user.controller.js.map

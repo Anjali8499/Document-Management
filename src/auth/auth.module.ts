@@ -1,13 +1,16 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthService } from './auth.service';
 import { UserModule } from '../user/user.module';
-import { TokenBlacklistService } from '../common/token-blacklist.service';
+import { UserSession } from './auth.entity';
+import { SessionService } from './session.service';
 
 @Module({
   imports: [
     forwardRef(() => UserModule),
+    TypeOrmModule.forFeature([UserSession]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -19,12 +22,12 @@ import { TokenBlacklistService } from '../common/token-blacklist.service';
   ],
   providers: [
     AuthService, 
-    TokenBlacklistService,
+    SessionService,
   ],
   exports: [
     AuthService, 
     JwtModule, 
-    TokenBlacklistService,
+    SessionService,
   ],
 })
 export class AuthModule {} 

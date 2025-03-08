@@ -11,23 +11,17 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.JwtAuthMiddleware = void 0;
 const common_1 = require("@nestjs/common");
-const jwt_1 = require("@nestjs/jwt");
-const token_blacklist_service_1 = require("./token-blacklist.service");
+const session_service_1 = require("./session.service");
 const extract_token_util_1 = require("./utils/extract-token.util");
 let JwtAuthMiddleware = class JwtAuthMiddleware {
-    jwtService;
-    tokenBlacklistService;
-    constructor(jwtService, tokenBlacklistService) {
-        this.jwtService = jwtService;
-        this.tokenBlacklistService = tokenBlacklistService;
+    sessionService;
+    constructor(sessionService) {
+        this.sessionService = sessionService;
     }
-    use(req, res, next) {
+    async use(req, res, next) {
         try {
             const token = (0, extract_token_util_1.extractTokenFromHeader)(req);
-            if (this.tokenBlacklistService.isBlacklisted(token)) {
-                return next(new common_1.UnauthorizedException('Token has been revoked'));
-            }
-            const payload = this.jwtService.verify(token);
+            const payload = await this.sessionService.verifySession(token);
             req['user'] = payload;
             req['token'] = token;
             next();
@@ -45,7 +39,6 @@ let JwtAuthMiddleware = class JwtAuthMiddleware {
 exports.JwtAuthMiddleware = JwtAuthMiddleware;
 exports.JwtAuthMiddleware = JwtAuthMiddleware = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [jwt_1.JwtService,
-        token_blacklist_service_1.TokenBlacklistService])
+    __metadata("design:paramtypes", [session_service_1.SessionService])
 ], JwtAuthMiddleware);
 //# sourceMappingURL=jwt-auth.middleware.js.map

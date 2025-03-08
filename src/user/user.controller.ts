@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, Patch, InternalServerErrorException, ConflictException, NotFoundException, UnauthorizedException, ForbiddenException, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Patch, InternalServerErrorException, ConflictException, NotFoundException, UnauthorizedException, ForbiddenException, Delete, Inject, forwardRef } from '@nestjs/common';
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -7,94 +7,93 @@ import { LoginDto } from './dto/login.dto';
 import { ApiTags, ApiResponse, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse, ApiBearerAuth, ApiForbiddenResponse } from '@nestjs/swagger';
 import { hashPassword, comparePasswords } from '../utils/password.utils';
 import { AuthService } from '../auth/auth.service';
-import { CurrentUser } from '../common/current-user.decorator';
-import { Token } from '../common/token.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { SessionService } from '../auth/session.service';
 
-interface JwtPayload {
-  id: number;
-  email: string;
-  role: string;
-}
-
-@ApiTags('auth')
+@ApiTags('users')
 @Controller()
 export class UserController {
   constructor(
     private readonly userService: UserService,
-    private readonly authService: AuthService
+    private readonly authService: AuthService,
+    @Inject(forwardRef(() => SessionService))
+    private readonly sessionService: SessionService
   ) {}
 
-  @Post('signup')
-  @ApiResponse({ status: 201, description: 'User registered successfully', type: UserResponseDto })  
-  @ApiConflictResponse({ description: 'User with the same email or mobile already exists' })
+  @Post('register')
+  @ApiResponse({ status: 201, description: 'User registered successfully', type: UserResponseDto })
+  @ApiConflictResponse({ description: 'Email already exists' })
   async createUser(
     @Body() createUserDto: CreateUserDto,
   ): Promise<UserResponseDto> {
     try {
-      const { username, email, mobile, role } = createUserDto;
+      const { username, email, mobile, password, role } = createUserDto;
       
-      // Check if user with same email or mobile already exists
-      const existingUser = await this.userService.findByEmailOrMobile(email, mobile);
+      // Check if user with this email already exists
+      const existingUser = await this.userService.findByEmail(email);
       if (existingUser) {
-        throw new ConflictException('User with this email or mobile already exists');
+        throw new ConflictException('Email already exists');
       }
-      
+
       // Hash the password
-      const hashedPassword = await hashPassword(createUserDto.password);
+      const hashedPassword = await hashPassword(password);
       
-      // Create the user
+      // Create the user with hashed password
       const user = await this.userService.createUser(username, email, hashedPassword, mobile, role);
-      
-      // Return user data without sensitive information
+
+      // Create a session directly using the session service
+      const token = await this.sessionService.createSession(user);
+
+      // Return user data with token
       return {
         id: user.id,
         username: user.username,
         email: user.email,
         mobile: user.mobile,
-        role: user.role
+        role: user.role,
+        accessToken: token,
       };
     } catch (error) {
       if (error instanceof ConflictException) {
         throw error;
       }
-      throw new InternalServerErrorException('Error creating user');
+      console.error('Registration error:', error);
+      throw new InternalServerErrorException('Error during registration');
     }
   }
 
   @Post('login')
   @ApiResponse({ status: 200, description: 'User logged in successfully', type: UserResponseDto })
-  @ApiNotFoundResponse({ description: 'User not found' })
   @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
   async login(@Body() loginDto: LoginDto): Promise<UserResponseDto> {
-    const { email, password } = loginDto;
     try {
       // Find user by email
-      const user = await this.userService.findByEmail(email);
+      const user = await this.userService.findByEmail(loginDto.email);
       if (!user) {
-        throw new NotFoundException('User not found');
+        throw new UnauthorizedException('Invalid credentials');
       }
 
-      // Verify password using the utility function
-      const isPasswordValid = await comparePasswords(password, user.password);
+      // Verify password
+      const isPasswordValid = await comparePasswords(loginDto.password, user.password);
       if (!isPasswordValid) {
         throw new UnauthorizedException('Invalid credentials');
       }
 
-      // Generate JWT token using AuthService
-      const token = this.authService.generateToken(user);
+      // Create a session directly using the session service
+      const token = await this.sessionService.createSession(user);
 
-      // Return user data and token
+      // Return user data with token
       return {
         id: user.id,
         username: user.username,
-        email: user.email, 
+        email: user.email,
         mobile: user.mobile,
         role: user.role,
-        accessToken: token
+        accessToken: token,
       };
-
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof UnauthorizedException) {
+      if (error instanceof UnauthorizedException) {
         throw error;
       }
       console.error('Login error:', error);
@@ -106,11 +105,21 @@ export class UserController {
   @ApiBearerAuth()    
   @ApiResponse({ status: 200, description: 'User logged out successfully' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  async logout(@CurrentUser()  @Token() token: string): Promise<void> {
+  async logout(req: Request, @CurrentUser() user: JwtPayload): Promise<{ message: string }> {
     try {
-      // Revoke the token by adding it to the blacklist
-      await this.authService.revokeToken(token);
-      return;
+      const token = req['token'];
+      // Get all active sessions for this user
+      const activeSessions = await this.sessionService.findActiveSessionsByUserId(user.id);
+      if (activeSessions.length === 0) {
+        return { message: 'No active sessions to logout from' };
+      }
+      // Revoke the current token by invalidating the session
+      await this.sessionService.invalidateSession(token);
+      
+      // Log the successful logout
+      console.log(`User ${user.email} (ID: ${user.id}) logged out successfully`);
+      
+      return { message: 'Logged out successfully' };
     } catch (error: unknown) {
       if (error instanceof UnauthorizedException) {
         throw error;
@@ -119,6 +128,7 @@ export class UserController {
       throw new InternalServerErrorException('Error during logout');
     }
   }
+  
 
   @Get('users')
   @ApiBearerAuth()
@@ -133,7 +143,13 @@ export class UserController {
       }
       
       const users = await this.userService.findAll();
-      return users;
+      return users.map(user => ({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        mobile: user.mobile,
+        role: user.role
+      }));
     } catch (error) {
       if (error instanceof ForbiddenException) {
         throw error;
@@ -143,38 +159,55 @@ export class UserController {
     }
   }
 
+  @Get('users/:id')
+  @ApiBearerAuth()
+  @ApiResponse({ status: 200, description: 'Return user by ID', type: UserResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiForbiddenResponse({ description: 'Forbidden - Can only access own profile unless admin' })
+  async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload): Promise<UserResponseDto> {
+    try {
+      // Check if user is trying to access their own profile or is an admin
+      if (user.id !== parseInt(id) && user.role !== 'ADMIN') {
+        throw new ForbiddenException('You can only access your own profile');
+      }
+      
+      const foundUser = await this.userService.findOne(parseInt(id));
+      
+      return {
+        id: foundUser.id,
+        username: foundUser.username,
+        email: foundUser.email,
+        mobile: foundUser.mobile,
+        role: foundUser.role
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      console.error(`Error fetching user ${id}:`, error);
+      throw new InternalServerErrorException('Error fetching user');
+    }
+  }
+
   @Patch('users/:id')
   @ApiBearerAuth()
   @ApiResponse({ status: 200, description: 'User updated successfully', type: UserResponseDto })
-  @ApiNotFoundResponse({ description: 'User not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  @ApiNotFoundResponse({ description: 'User not found' })
   @ApiForbiddenResponse({ description: 'Forbidden - Can only update own profile unless admin' })
-  @ApiConflictResponse({ description: 'User with the same email or mobile already exists' })
   async updateUser(
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,
     @CurrentUser() user: JwtPayload
   ): Promise<UserResponseDto> {
     try {
-      const userId = Number(id);
-      
-      // Check if user is updating their own profile or is an admin
-      if (user.id !== userId && user.role !== 'ADMIN') {
+      // Check if user is trying to update their own profile or is an admin
+      if (user.id !== parseInt(id) && user.role !== 'ADMIN') {
         throw new ForbiddenException('You can only update your own profile');
       }
       
-      // Check if updating to an email or mobile that already exists
-      if (updateUserDto.email || updateUserDto.mobile) {
-        await this.userService.checkUserExistsForUpdate(userId, updateUserDto);
-      }
-      
-      // If password is being updated, hash it
-      if (updateUserDto.password) {
-        const hashedPassword = await hashPassword(updateUserDto.password);
-        updateUserDto.password = hashedPassword;
-      }
-      
-      const updatedUser = await this.userService.update(userId, updateUserDto);
+      const updatedUser = await this.userService.update(parseInt(id), updateUserDto);
       if (!updatedUser) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
@@ -187,39 +220,11 @@ export class UserController {
         role: updatedUser.role
       };
     } catch (error) {
-      if (error instanceof NotFoundException || 
-          error instanceof ConflictException || 
-          error instanceof ForbiddenException) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
         throw error;
       }
-      console.error('Error updating user:', error);
+      console.error(`Error updating user ${id}:`, error);
       throw new InternalServerErrorException('Error updating user');
     }
   }
-
-  @Get('token-info')
-  @ApiBearerAuth()
-  @ApiResponse({ status: 200, description: 'Token information retrieved successfully' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  async getTokenInfo(@Token() token: string): Promise<{ tokenInfo: JwtPayload }> {
-    try {
-      // Decode the token to get its information
-      const decodedToken = await this.authService.verifyToken(token) as JwtPayload;
-      // Create a clean payload without sensitive information
-      const tokenInfo: JwtPayload = {
-        id: decodedToken.id,
-        email: decodedToken.email,
-        role: decodedToken.role
-      };
-      
-      return { tokenInfo };
-    } catch (error: unknown) {
-      if (error instanceof UnauthorizedException) {
-        throw error;
-      }
-      console.error('Token info error:', error);
-      throw new InternalServerErrorException('Error retrieving token information');
-    }
-  }
 }
-
