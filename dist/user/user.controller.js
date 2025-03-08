@@ -14,24 +14,17 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UserController = void 0;
 const common_1 = require("@nestjs/common");
-const user_service_1 = require("./user.service");
-const create_user_dto_1 = require("./dto/create-user.dto");
-const update_user_dto_1 = require("./dto/update-user.dto");
-const user_response_dto_1 = require("./dto/user-response.dto");
-const login_dto_1 = require("./dto/login.dto");
+const user_dto_1 = require("./dto/user.dto");
 const swagger_1 = require("@nestjs/swagger");
 const password_utils_1 = require("../utils/password.utils");
-const auth_service_1 = require("../auth/auth.service");
-const current_user_decorator_1 = require("../auth/decorators/current-user.decorator");
-const session_service_1 = require("../auth/session.service");
+const user_service_1 = require("./user.service");
+const current_user_decorator_1 = require("../decorators/current-user.decorator");
+const token_decorator_1 = require("../decorators/token.decorator");
+const redis_util_1 = require("../utils/redis.util");
 let UserController = class UserController {
     userService;
-    authService;
-    sessionService;
-    constructor(userService, authService, sessionService) {
+    constructor(userService) {
         this.userService = userService;
-        this.authService = authService;
-        this.sessionService = sessionService;
     }
     async createUser(createUserDto) {
         try {
@@ -42,7 +35,17 @@ let UserController = class UserController {
             }
             const hashedPassword = await (0, password_utils_1.hashPassword)(password);
             const user = await this.userService.createUser(username, email, hashedPassword, mobile, role);
-            const token = await this.sessionService.createSession(user);
+            if (!user) {
+                throw new common_1.InternalServerErrorException('Error during registration');
+            }
+            const token = this.userService.signToken({
+                id: user.id,
+                email: user.email,
+                role: user.role,
+                mobile: user.mobile
+            });
+            await this.userService.storeSession(user.id, user);
+            await (0, redis_util_1.setRedisValue)(user.id.toString(), token, 3600);
             return {
                 id: user.id,
                 username: user.username,
@@ -70,7 +73,14 @@ let UserController = class UserController {
             if (!isPasswordValid) {
                 throw new common_1.UnauthorizedException('Invalid credentials');
             }
-            const token = await this.sessionService.createSession(user);
+            const token = this.userService.signToken({
+                id: user.id,
+                email: user.email,
+                role: user.role,
+                mobile: user.mobile
+            });
+            await this.userService.storeSession(user.id, user);
+            await (0, redis_util_1.setRedisValue)(user.id.toString(), token, 3600);
             return {
                 id: user.id,
                 username: user.username,
@@ -88,13 +98,10 @@ let UserController = class UserController {
             throw new common_1.InternalServerErrorException('Error during login');
         }
     }
-    async logout(user) {
+    async logout(user, token) {
         try {
-            const activeSessions = await this.sessionService.findActiveSessionsByUserId(user.id);
-            if (activeSessions.length === 0) {
-                return { message: 'No active sessions to logout from' };
-            }
-            await this.sessionService.invalidateSession(user.token);
+            await this.userService.blacklistToken(token);
+            await this.userService.removeSession(user.id);
             console.log(`User ${user.email} (ID: ${user.id}) logged out successfully`);
             return { message: 'Logged out successfully' };
         }
@@ -104,27 +111,6 @@ let UserController = class UserController {
             }
             console.error('Logout error:', error);
             throw new common_1.InternalServerErrorException('Error during logout');
-        }
-    }
-    async logoutSession(sessionId, user) {
-        try {
-            const id = parseInt(sessionId, 10);
-            if (isNaN(id)) {
-                throw new common_1.NotFoundException('Invalid session ID');
-            }
-            const success = await this.sessionService.invalidateSessionById(id, user.id);
-            if (!success) {
-                throw new common_1.NotFoundException('Session not found or does not belong to you');
-            }
-            console.log(`User ${user.email} (ID: ${user.id}) invalidated session ${id}`);
-            return { message: 'Session invalidated successfully' };
-        }
-        catch (error) {
-            if (error instanceof common_1.NotFoundException || error instanceof common_1.UnauthorizedException) {
-                throw error;
-            }
-            console.error('Session invalidation error:', error);
-            throw new common_1.InternalServerErrorException('Error during session invalidation');
         }
     }
     async findAll(user) {
@@ -196,40 +182,24 @@ let UserController = class UserController {
             throw new common_1.InternalServerErrorException('Error updating user');
         }
     }
-    async getActiveSessions(user) {
-        try {
-            const sessions = await this.sessionService.findActiveSessionsByUserId(user.id);
-            const sanitizedSessions = sessions.map(session => ({
-                id: session.id,
-                createdAt: session.createdAt,
-                expiresAt: session.expiresAt,
-                tokenPreview: session.token.substring(0, 10) + '...'
-            }));
-            return { sessions: sanitizedSessions };
-        }
-        catch (error) {
-            console.error('Error fetching active sessions:', error);
-            throw new common_1.InternalServerErrorException('Error fetching active sessions');
-        }
-    }
 };
 exports.UserController = UserController;
 __decorate([
     (0, common_1.Post)('register'),
-    (0, swagger_1.ApiResponse)({ status: 201, description: 'User registered successfully', type: user_response_dto_1.UserResponseDto }),
+    (0, swagger_1.ApiResponse)({ status: 201, description: 'User registered successfully', type: user_dto_1.UserResponseDto }),
     (0, swagger_1.ApiConflictResponse)({ description: 'Email already exists' }),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_user_dto_1.CreateUserDto]),
+    __metadata("design:paramtypes", [user_dto_1.CreateUserDto]),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "createUser", null);
 __decorate([
     (0, common_1.Post)('login'),
-    (0, swagger_1.ApiResponse)({ status: 200, description: 'User logged in successfully', type: user_response_dto_1.UserResponseDto }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'User logged in successfully', type: user_dto_1.UserResponseDto }),
     (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Invalid credentials' }),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [login_dto_1.LoginDto]),
+    __metadata("design:paramtypes", [user_dto_1.LoginDto]),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "login", null);
 __decorate([
@@ -238,26 +208,15 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 200, description: 'User logged out successfully' }),
     (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, token_decorator_1.Token)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "logout", null);
 __decorate([
-    (0, common_1.Post)('logout/session/:id'),
-    (0, swagger_1.ApiBearerAuth)(),
-    (0, swagger_1.ApiResponse)({ status: 200, description: 'Session invalidated successfully' }),
-    (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
-    (0, swagger_1.ApiNotFoundResponse)({ description: 'Session not found' }),
-    __param(0, (0, common_1.Param)('id')),
-    __param(1, (0, current_user_decorator_1.CurrentUser)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
-    __metadata("design:returntype", Promise)
-], UserController.prototype, "logoutSession", null);
-__decorate([
     (0, common_1.Get)('users'),
     (0, swagger_1.ApiBearerAuth)(),
-    (0, swagger_1.ApiResponse)({ status: 200, description: 'Return all users', type: [user_response_dto_1.UserResponseDto] }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Return all users', type: [user_dto_1.UserResponseDto] }),
     (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
     (0, swagger_1.ApiForbiddenResponse)({ description: 'Forbidden - Requires admin role' }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
@@ -268,7 +227,7 @@ __decorate([
 __decorate([
     (0, common_1.Get)('users/:id'),
     (0, swagger_1.ApiBearerAuth)(),
-    (0, swagger_1.ApiResponse)({ status: 200, description: 'Return user by ID', type: user_response_dto_1.UserResponseDto }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Return user by ID', type: user_dto_1.UserResponseDto }),
     (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
     (0, swagger_1.ApiNotFoundResponse)({ description: 'User not found' }),
     (0, swagger_1.ApiForbiddenResponse)({ description: 'Forbidden - Can only access own profile unless admin' }),
@@ -281,7 +240,7 @@ __decorate([
 __decorate([
     (0, common_1.Patch)('users/:id'),
     (0, swagger_1.ApiBearerAuth)(),
-    (0, swagger_1.ApiResponse)({ status: 200, description: 'User updated successfully', type: user_response_dto_1.UserResponseDto }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'User updated successfully', type: user_dto_1.UserResponseDto }),
     (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
     (0, swagger_1.ApiNotFoundResponse)({ description: 'User not found' }),
     (0, swagger_1.ApiForbiddenResponse)({ description: 'Forbidden - Can only update own profile unless admin' }),
@@ -289,25 +248,12 @@ __decorate([
     __param(1, (0, common_1.Body)()),
     __param(2, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, update_user_dto_1.UpdateUserDto, Object]),
+    __metadata("design:paramtypes", [String, user_dto_1.UpdateUserDto, Object]),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "updateUser", null);
-__decorate([
-    (0, common_1.Get)('sessions'),
-    (0, swagger_1.ApiBearerAuth)(),
-    (0, swagger_1.ApiResponse)({ status: 200, description: 'Return all active sessions for the current user' }),
-    (0, swagger_1.ApiUnauthorizedResponse)({ description: 'Unauthorized' }),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
-    __metadata("design:returntype", Promise)
-], UserController.prototype, "getActiveSessions", null);
 exports.UserController = UserController = __decorate([
     (0, swagger_1.ApiTags)('users'),
     (0, common_1.Controller)(),
-    __param(2, (0, common_1.Inject)((0, common_1.forwardRef)(() => session_service_1.SessionService))),
-    __metadata("design:paramtypes", [user_service_1.UserService,
-        auth_service_1.AuthService,
-        session_service_1.SessionService])
+    __metadata("design:paramtypes", [user_service_1.UserService])
 ], UserController);
 //# sourceMappingURL=user.controller.js.map

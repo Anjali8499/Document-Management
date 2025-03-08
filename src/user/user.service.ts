@@ -3,12 +3,22 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './user.entity';
 import { UpdateUserDto } from './dto/user.dto';
+import { JwtService } from '@nestjs/jwt';
+import { 
+  createToken, 
+  JwtPayload, 
+  storeUserSession, 
+  removeUserSession, 
+  blacklistToken, 
+  getTokenExpirationTime 
+} from '../utils/token.util';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    private jwtService: JwtService
   ) {}
 
   async createUser(username: string, email: string, password: string, mobile: string, role: string): Promise<User> {
@@ -89,5 +99,41 @@ export class UserService {
 
   async remove(id: number): Promise<void> {
     await this.userRepository.delete(id);
+  }
+
+  /**
+   * Create a JWT token for a user
+   * @param payload User data to include in the token
+   * @returns JWT token
+   */
+  signToken(payload: JwtPayload): string {
+    return createToken(payload, this.jwtService);
+  }
+
+  /**
+   * Store user session in Redis
+   * @param userId User ID
+   * @param userData User data to store
+   * @param ttl Time to live in seconds (default: 24 hours)
+   */
+  async storeSession(userId: number, userData: any, ttl: number = 86400): Promise<void> {
+    await storeUserSession(userId, userData, ttl);
+  }
+
+  /**
+   * Remove user session from Redis
+   * @param userId User ID
+   */
+  async removeSession(userId: number): Promise<void> {
+    await removeUserSession(userId);
+  }
+
+  /**
+   * Blacklist a token
+   * @param token JWT token to blacklist
+   */
+  async blacklistToken(token: string): Promise<void> {
+    const ttl = getTokenExpirationTime(token);
+    await blacklistToken(token, ttl);
   }
 }

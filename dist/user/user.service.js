@@ -17,10 +17,14 @@ const common_1 = require("@nestjs/common");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
 const user_entity_1 = require("./user.entity");
+const jwt_1 = require("@nestjs/jwt");
+const token_util_1 = require("../utils/token.util");
 let UserService = class UserService {
     userRepository;
-    constructor(userRepository) {
+    jwtService;
+    constructor(userRepository, jwtService) {
         this.userRepository = userRepository;
+        this.jwtService = jwtService;
     }
     async createUser(username, email, password, mobile, role) {
         const user = new user_entity_1.User();
@@ -90,11 +94,25 @@ let UserService = class UserService {
     async remove(id) {
         await this.userRepository.delete(id);
     }
+    signToken(payload) {
+        return (0, token_util_1.createToken)(payload, this.jwtService);
+    }
+    async storeSession(userId, userData, ttl = 86400) {
+        await (0, token_util_1.storeUserSession)(userId, userData, ttl);
+    }
+    async removeSession(userId) {
+        await (0, token_util_1.removeUserSession)(userId);
+    }
+    async blacklistToken(token) {
+        const ttl = (0, token_util_1.getTokenExpirationTime)(token);
+        await (0, token_util_1.blacklistToken)(token, ttl);
+    }
 };
 exports.UserService = UserService;
 exports.UserService = UserService = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(user_entity_1.User)),
-    __metadata("design:paramtypes", [typeorm_2.Repository])
+    __metadata("design:paramtypes", [typeorm_2.Repository,
+        jwt_1.JwtService])
 ], UserService);
 //# sourceMappingURL=user.service.js.map

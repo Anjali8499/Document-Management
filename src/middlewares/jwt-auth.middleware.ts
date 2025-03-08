@@ -1,21 +1,36 @@
 import { Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
-import { SessionService } from '../auth/session.service';
-import { extractTokenFromHeader } from '../utils/extract-token.util';
+import { JwtService } from '@nestjs/jwt';
+import { 
+  extractTokenFromHeader, 
+  verifyToken, 
+  isTokenBlacklisted
+} from '../utils/token.util';
 
 @Injectable()
 export class JwtAuthMiddleware implements NestMiddleware {
   constructor(
-    private sessionService: SessionService
+    private jwtService: JwtService
   ) {}
 
   async use(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       // Extract token from header
-      const token = extractTokenFromHeader(req);
+      const authHeader = req.headers.authorization;
+      const token = extractTokenFromHeader(authHeader);
       
-      // Verify the token and session
-      const payload = await this.sessionService.verifySession(token);
+      if (!token) {
+        throw new UnauthorizedException('Missing or invalid authorization token');
+      }
+      
+      // Check if token is blacklisted
+      const isBlacklisted = await isTokenBlacklisted(token);
+      if (isBlacklisted) {
+        throw new UnauthorizedException('Token has been revoked');
+      }
+      
+      // Verify the token
+      const payload = verifyToken(token, this.jwtService);
       
       // Attach user info and token to request object
       req['user'] = payload;

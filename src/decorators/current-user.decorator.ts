@@ -1,5 +1,5 @@
 import { createParamDecorator, ExecutionContext, UnauthorizedException } from '@nestjs/common';
-import { JwtPayload } from '../interfaces/jwt-payload.interface';
+import { JwtPayload } from '../utils/token.util';
 
 /**
  * Parameter decorator that extracts the current user from the request
@@ -7,10 +7,11 @@ import { JwtPayload } from '../interfaces/jwt-payload.interface';
  */
 export const CurrentUser = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): JwtPayload => {
-    const user = ctx.switchToHttp().getRequest< JwtPayload >();
-    if (!user) {
+    const request = ctx.switchToHttp().getRequest<Request & { user: JwtPayload }>();
+    
+    if (!request.user) {
       throw new UnauthorizedException('User is not authenticated');
     }
-    return user;
+    return request.user;
   },
-);
+); 

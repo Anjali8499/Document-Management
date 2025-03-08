@@ -1,21 +1,18 @@
-import { Controller, Get, Post, Param, Body, Patch, InternalServerErrorException, ConflictException, NotFoundException, UnauthorizedException, ForbiddenException, Inject, forwardRef, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Patch, InternalServerErrorException, ConflictException, NotFoundException, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { CreateUserDto, UpdateUserDto, UserResponseDto, LoginDto } from './dto/user.dto';
 import { ApiTags, ApiResponse, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse, ApiBearerAuth, ApiForbiddenResponse } from '@nestjs/swagger';
 import { hashPassword, comparePasswords } from '../utils/password.utils';
 import { UserService } from './user.service';
-import { AuthService } from '../auth/auth.service';
-import { CurrentUser } from '../decorators/current-user.decorator'; 
-import { JwtPayload } from '../interfaces/jwt-payload.interface';
-import { SessionService } from '../auth/session.service';
+import { JwtPayload } from '../utils/token.util';
+import { CurrentUser } from '../decorators/current-user.decorator';
+import { Token } from '../decorators/token.decorator';
+import {  setRedisValue } from 'src/utils/redis.util';
 
 @ApiTags('users')
 @Controller()
 export class UserController {
   constructor(
     private readonly userService: UserService,
-    private readonly authService: AuthService,
-    @Inject(forwardRef(() => SessionService))
-    private readonly sessionService: SessionService
   ) {}
 
   @Post('register')
@@ -38,9 +35,20 @@ export class UserController {
       
       // Create the user with hashed password
       const user = await this.userService.createUser(username, email, hashedPassword, mobile, role);
+      if(!user){
+        throw new InternalServerErrorException('Error during registration');
+      }
 
-      // Create a session directly using the session service
-      const token = await this.sessionService.createSession(user);
+      const token = this.userService.signToken({ 
+        id: user.id, 
+        email: user.email, 
+        role: user.role,
+        mobile: user.mobile
+      });
+
+      // Store user session in Redis
+      await this.userService.storeSession(user.id, user);
+      await setRedisValue(user.id.toString(), token, 3600);
 
       // Return user data with token
       return {
@@ -77,8 +85,17 @@ export class UserController {
         throw new UnauthorizedException('Invalid credentials');
       }
 
-      // Create a session directly using the session service
-      const token = await this.sessionService.createSession(user);
+      // Generate token
+      const token = this.userService.signToken({ 
+        id: user.id, 
+        email: user.email, 
+        role: user.role,
+        mobile: user.mobile
+      });
+
+      // Store user session in Redis
+      await this.userService.storeSession(user.id, user);
+      await setRedisValue(user.id.toString(), token, 3600);
 
       // Return user data with token
       return {
@@ -98,27 +115,23 @@ export class UserController {
     }
   }
 
-  @Delete('logout')
+  @Post('logout')
   @ApiBearerAuth()    
   @ApiResponse({ status: 200, description: 'User logged out successfully' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  async logout(@CurrentUser() user: JwtPayload): Promise<{ message: string }> {
+  async logout(@CurrentUser() user: JwtPayload, @Token() token: string): Promise<{ message: string }> {
     try {
-      // Get all active sessions for this user
-      const activeSessions = await this.sessionService.findActiveSessionsByUserId(user.id);
+      // Blacklist the token
+      await this.userService.blacklistToken(token);
       
-      if (activeSessions.length === 0) {
-        return { message: 'No active sessions to logout from' };
-      }
-      
-      // Revoke the current token by invalidating the session
-      await this.sessionService.invalidateSession(user.token);
+      // Remove user session
+      await this.userService.removeSession(user.id);
       
       // Log the successful logout
       console.log(`User ${user.email} (ID: ${user.id}) logged out successfully`);
       
       return { message: 'Logged out successfully' };
-    } catch (error: unknown) {
+    } catch (error) {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
@@ -127,40 +140,7 @@ export class UserController {
     }
   }
 
-  @Post('logout/session/:id')
-  @ApiBearerAuth()    
-  @ApiResponse({ status: 200, description: 'Session invalidated successfully' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  @ApiNotFoundResponse({ description: 'Session not found' })
-  async logoutSession(
-    @Param('id') sessionId: string,
-    @CurrentUser() user: JwtPayload
-  ): Promise<{ message: string }> {
-    try {
-      const id = parseInt(sessionId, 10);
-      if (isNaN(id)) {
-        throw new NotFoundException('Invalid session ID');
-      }
-      
-      // Invalidate the specific session
-      const success = await this.sessionService.invalidateSessionById(id, user.id);
-      
-      if (!success) {
-        throw new NotFoundException('Session not found or does not belong to you');
-      }
-      
-      // Log the successful session invalidation
-      console.log(`User ${user.email} (ID: ${user.id}) invalidated session ${id}`);
-      
-      return { message: 'Session invalidated successfully' };
-    } catch (error: unknown) {
-      if (error instanceof NotFoundException || error instanceof UnauthorizedException) {
-        throw error;
-      }
-      console.error('Session invalidation error:', error);
-      throw new InternalServerErrorException('Error during session invalidation');
-    }
-  }
+ 
   
 
   @Get('users')
@@ -258,31 +238,6 @@ export class UserController {
       }
       console.error(`Error updating user ${id}:`, error);
       throw new InternalServerErrorException('Error updating user');
-    }
-  }
-
-  @Get('sessions')
-  @ApiBearerAuth()
-  @ApiResponse({ status: 200, description: 'Return all active sessions for the current user' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  async getActiveSessions(@CurrentUser() user: JwtPayload): Promise<{ sessions: any[] }> {
-    try {
-      // Get all active sessions for this user
-      const sessions = await this.sessionService.findActiveSessionsByUserId(user.id);
-      
-      // Return only necessary session information (exclude sensitive data)
-      const sanitizedSessions = sessions.map(session => ({
-        id: session.id,
-        createdAt: session.createdAt,
-        expiresAt: session.expiresAt,
-        // Include a truncated version of the token for identification
-        tokenPreview: session.token.substring(0, 10) + '...'
-      }));
-      
-      return { sessions: sanitizedSessions };
-    } catch (error: unknown) {
-      console.error('Error fetching active sessions:', error);
-      throw new InternalServerErrorException('Error fetching active sessions');
     }
   }
 }
